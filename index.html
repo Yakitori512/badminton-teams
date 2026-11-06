@@ -72,23 +72,30 @@ td,th{padding:4px 6px;text-align:center;border-bottom:1px solid var(--line)}
 function shuffle(a){a=a.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
 
 // 総当たり：全組み合わせを1回ずつ。コートが空くたびに、次の試合を1つ選んで入れる。
+// 対戦順は円形法（サークル法）：1周目で全チームが1試合ずつ、2周目で全チームが次の1試合ずつ…と進む。
+// チーム番号を最初にシャッフルするので、毎回違う順番になる。奇数チームは1チームずつ休み（不戦）が回る。
+function circleOrder(T){
+  let arr=shuffle([...Array(T).keys()]);if(T%2)arr.push(null);
+  const n=arr.length,out=[];
+  for(let r=0;r<n-1;r++){
+    for(let i=0;i<n/2;i++){
+      const a=arr[i],b=arr[n-1-i];
+      if(a!==null&&b!==null)out.push(a<b?[a,b]:[b,a]);
+    }
+    arr=[arr[0],arr[n-1],...arr.slice(1,n-1)];
+  }
+  return out;
+}
 function newGame(T,courts){
-  const remaining=[];
-  for(let a=0;a<T;a++)for(let b=a+1;b<T;b++)remaining.push([a,b]);
+  const remaining=circleOrder(T);
   const g={T,total:remaining.length,remaining,courts:Array(Math.min(courts,Math.floor(T/2))).fill(null),
     started:Array(T).fill(0),idle:Array(T).fill(0),tick:0,wins:Array(T).fill(0),losses:Array(T).fill(0),results:[]};
   fill(g);return g;
 }
-// 次の試合：今コートにいないチーム同士で、試合数（開始済み）の合計が少ない→休みが長い順。
+// 次の試合：円形法の順番で、今コートにいないチーム同士の最初の試合。
 function pickNext(g){
   const busy=new Set();g.courts.forEach(c=>{if(c){busy.add(c[0]);busy.add(c[1]);}});
-  let best=-1,bs=null;
-  g.remaining.forEach(([a,b],i)=>{
-    if(busy.has(a)||busy.has(b))return;
-    const s=[g.started[a]+g.started[b],g.idle[a]+g.idle[b],Math.random()];
-    if(!bs||s[0]<bs[0]||(s[0]===bs[0]&&(s[1]<bs[1]||(s[1]===bs[1]&&s[2]<bs[2])))){best=i;bs=s;}
-  });
-  return best;
+  return g.remaining.findIndex(([a,b])=>!busy.has(a)&&!busy.has(b));
 }
 function fill(g){
   for(let c=0;c<g.courts.length;c++){
