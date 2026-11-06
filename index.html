@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>バドミントン チーム決め</title>
+<style>
+:root{--bg:#f4f6f8;--card:#fff;--text:#1d2733;--sub:#667085;--main:#0b7a5b;--line:#dde3ea}
+@media (prefers-color-scheme:dark){:root{--bg:#10151a;--card:#1a222b;--text:#e8edf2;--sub:#97a3b0;--main:#33b58e;--line:#2c3743}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 -apple-system,"Hiragino Sans",sans-serif;padding:12px 16px calc(24px + env(safe-area-inset-bottom))}
+h1{font-size:20px;margin:4px 0 12px}
+h2{font-size:16px;margin:0 0 8px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+label{display:block;font-size:14px;color:var(--sub);margin:8px 0 4px}
+textarea,input[type=number]{width:100%;font-size:16px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)}
+textarea{min-height:130px}
+.row{display:flex;gap:10px}.row>div{flex:1}
+button{font-size:16px;padding:12px;border:0;border-radius:10px;background:var(--main);color:#fff;font-weight:600;width:100%;margin-top:10px}
+button.sub{background:transparent;color:var(--main);border:1px solid var(--main)}
+.stepper{display:flex;align-items:center;gap:8px}
+.stepper button{width:44px;margin:0;padding:8px;font-size:20px}
+.stepper span{flex:1;text-align:center;font-size:22px;font-weight:700}
+.team{border-left:6px solid var(--c);padding:6px 10px;margin:6px 0;background:var(--bg);border-radius:6px}
+.team b{color:var(--c)}
+.round{margin:8px 0;padding-top:8px;border-top:1px solid var(--line)}
+.match{display:flex;align-items:center;gap:6px;padding:4px 0}
+.court{font-size:12px;color:var(--sub);width:48px;flex:none}
+.chip{flex:1;text-align:center;padding:6px 4px;border-radius:8px;color:#fff;font-weight:600;background:var(--c)}
+.vs{color:var(--sub);font-size:13px}
+.rest{font-size:13px;color:var(--sub)}
+table{width:100%;border-collapse:collapse;font-size:14px}
+td,th{padding:4px 6px;text-align:center;border-bottom:1px solid var(--line)}
+.hide{display:none}
+.note{font-size:13px;color:var(--sub)}
+</style>
+</head>
+<body>
+<h1>🏸 バドミントン チーム決め</h1>
+
+<div class="card">
+  <h2>設定</h2>
+  <label>参加者（1行に1人）</label>
+  <textarea id="names" placeholder="田中&#10;佐藤&#10;鈴木"></textarea>
+  <div class="note" id="count"></div>
+  <div class="row">
+    <div><label>チーム数</label>
+      <div class="stepper"><button class="sub" data-t="teams" data-d="-1">−</button><span id="v-teams">2</span><button class="sub" data-t="teams" data-d="1">＋</button></div></div>
+    <div><label>コート数</label>
+      <div class="stepper"><button class="sub" data-t="courts" data-d="-1">−</button><span id="v-courts">1</span><button class="sub" data-t="courts" data-d="1">＋</button></div></div>
+  </div>
+  <label>ラウンド数（1ラウンド＝全コート同時に試合）</label>
+  <div class="stepper"><button class="sub" data-t="rounds" data-d="-1">−</button><span id="v-rounds">4</span><button class="sub" data-t="rounds" data-d="1">＋</button></div>
+  <button id="go">チームを決めて対戦表を作る</button>
+  <button class="sub" id="reteam">チーム分けだけやり直す</button>
+  <button class="sub" id="resched">対戦表だけやり直す</button>
+</div>
+
+<div id="out" class="hide">
+  <div class="card"><h2>チーム</h2><div id="teams"></div></div>
+  <div class="card"><h2>対戦表</h2><div id="sched"></div></div>
+  <div class="card"><h2>試合数の確認</h2><div id="stats"></div></div>
+</div>
+
+<script>
+/* ===== ロジック（テスト用に LOGIC_START〜LOGIC_END を単体で取り出せる） ===== */
+// LOGIC_START
+function shuffle(a){a=a.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
+
+// 参加者をシャッフルして配る。人数差は最大1人。
+function makeTeams(players,teamCount){
+  const teams=Array.from({length:teamCount},()=>[]);
+  shuffle(players).forEach((p,i)=>teams[i%teamCount].push(p));
+  return teams;
+}
+
+// 対戦表：毎ラウンド「試合数が少ない順→休みが長い順」でチームを選び、同じ相手が続かないように組む。
+// 1ラウンドに使うコート数 = min(コート数, floor(チーム数/2))
+function makeSchedule(teamCount,courts,rounds){
+  let best=null,bestScore=Infinity;
+  for(let trial=0;trial<200;trial++){
+    const s=buildOnce(teamCount,courts,rounds);
+    if(s.score<bestScore){best=s;bestScore=s.score;}
+    if(bestScore===0)break;
+  }
+  return best;
+}
+function buildOnce(T,courts,rounds){
+  const m=Math.min(courts,Math.floor(T/2));
+  const games=Array(T).fill(0),last=Array(T).fill(-1);
+  const vs=Array.from({length:T},()=>Array(T).fill(0));
+  const out=[];
+  for(let r=0;r<rounds;r++){
+    const order=shuffle([...Array(T).keys()]).sort((a,b)=>games[a]-games[b]||last[a]-last[b]);
+    const active=order.slice(0,m*2);
+    let bestPairs=null,bestCost=Infinity;
+    for(let k=0;k<60;k++){
+      const p=shuffle(active);let cost=0;const pairs=[];
+      for(let i=0;i<m;i++){const a=p[2*i],b=p[2*i+1];pairs.push([a,b]);cost+=vs[a][b]*vs[a][b]+vs[a][b];}
+      if(cost<bestCost){bestCost=cost;bestPairs=pairs;}
+      if(cost===0)break;
+    }
+    bestPairs.forEach(([a,b])=>{games[a]++;games[b]++;last[a]=last[b]=r;vs[a][b]++;vs[b][a]++;});
+    out.push({matches:bestPairs,rest:[...Array(T).keys()].filter(t=>!active.includes(t))});
+  }
+  let pairMax=0,pairMin=Infinity;
+  for(let a=0;a<T;a++)for(let b=a+1;b<T;b++){pairMax=Math.max(pairMax,vs[a][b]);pairMin=Math.min(pairMin,vs[a][b]);}
+  const spread=Math.max(...games)-Math.min(...games);
+  return {rounds:out,games,score:spread*1000+(pairMax-pairMin)};
+}
+// LOGIC_END
+
+/* ===== 画面 ===== */
+const COLORS=['#e5484d','#3e63dd','#2f9e44','#e08a00','#8e4ec6','#0b9ebc','#d6409f','#6b7280'];
+const NAMES=['赤','青','緑','橙','紫','水','桃','灰'];
+const $=id=>document.getElementById(id);
+const state={teams:2,courts:1,rounds:4,teamList:null};
+const LIM={teams:[2,8],courts:[1,6],rounds:[1,30]};
+
+function load(){try{const s=JSON.parse(localStorage.getItem('bd')||'null');if(s){Object.assign(state,s.state);$('names').value=s.names||'';}}catch(e){}}
+function save(){try{localStorage.setItem('bd',JSON.stringify({state:{teams:state.teams,courts:state.courts,rounds:state.rounds},names:$('names').value}));}catch(e){}}
+function players(){return $('names').value.split('\n').map(s=>s.trim()).filter(Boolean);}
+function refresh(){
+  state.courts=Math.min(state.courts,Math.floor(state.teams/2));
+  if(state.courts<1)state.courts=1;
+  for(const k of ['teams','courts','rounds'])$('v-'+k).textContent=state[k];
+  const n=players().length;
+  $('count').textContent=`${n}人 ／ 1チーム約${n?(n/state.teams).toFixed(1):0}人 ／ 同時に使えるコート最大${Math.floor(state.teams/2)}`;
+  save();
+}
+document.querySelectorAll('.stepper button').forEach(b=>b.onclick=()=>{
+  const k=b.dataset.t,[lo,hi]=LIM[k];
+  let hiK=k==='courts'?Math.min(hi,Math.floor(state.teams/2)):hi;
+  state[k]=Math.max(lo,Math.min(hiK,state[k]+Number(b.dataset.d)));refresh();
+});
+$('names').oninput=refresh;
+
+const esc=s=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const chip=t=>`<span class="chip" style="--c:${COLORS[t]}">${NAMES[t]}</span>`;
+function renderTeams(){
+  $('teams').innerHTML=state.teamList.map((m,i)=>`<div class="team" style="--c:${COLORS[i]}"><b>${NAMES[i]}チーム（${m.length}人）</b><br>${m.map(esc).join('、')||'—'}</div>`).join('');
+}
+function renderSchedule(){
+  const s=state.sched;
+  $('sched').innerHTML=s.rounds.map((r,i)=>`<div class="round"><b>第${i+1}試合</b>`+
+    r.matches.map(([a,b],c)=>`<div class="match"><span class="court">コート${c+1}</span>${chip(a)}<span class="vs">vs</span>${chip(b)}</div>`).join('')+
+    (r.rest.length?`<div class="rest">休み：${r.rest.map(t=>NAMES[t]).join('・')}</div>`:'')+`</div>`).join('');
+  $('stats').innerHTML='<table><tr><th>チーム</th><th>試合数</th></tr>'+
+    s.games.map((g,t)=>`<tr><td>${chip(t)}</td><td>${g}</td></tr>`).join('')+'</table>'+
+    `<div class="note">最大差：${Math.max(...s.games)-Math.min(...s.games)}試合</div>`;
+}
+function doTeams(){
+  const p=players();
+  if(p.length<state.teams){alert(`参加者がチーム数（${state.teams}）より少ないです`);return false;}
+  state.teamList=makeTeams(p,state.teams);return true;
+}
+function doSched(){state.sched=makeSchedule(state.teams,state.courts,state.rounds);}
+function show(){$('out').classList.remove('hide');renderTeams();renderSchedule();}
+$('go').onclick=()=>{if(doTeams()){doSched();show();$('out').scrollIntoView({behavior:'smooth'});}};
+$('reteam').onclick=()=>{if(doTeams()){if(!state.sched)doSched();show();}};
+$('resched').onclick=()=>{if(!state.teamList&&!doTeams())return;doSched();show();};
+load();refresh();
+</script>
+</body>
+</html>
